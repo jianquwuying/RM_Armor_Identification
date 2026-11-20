@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# 便捷启动器：免激活 venv，直接把参数传给同目录的 show-image.py。
+# 用法：./show-image -i /path/to/image.png [--mode fit|fill|stretch] [-B 0-100]
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 互斥：直接锁 /dev/pio0（PIO 后端唯一的硬件资源）。
+# 用 200 号 fd 保证它比 Python 打开的 pio 设备 fd 更晚关闭，
+# 新实例会等旧实例彻底释放硬件后再启动，避免两个进程同时驱动点阵屏。
+if [ -r /dev/pio0 ]; then
+    exec 200</dev/pio0
+    if ! flock -w 3 200; then
+        echo "错误：点阵屏正被另一个程序占用（可能还开着点阵屏选区/图片窗口）。" >&2
+        echo "请先关闭它，等一两秒后重试。" >&2
+        exit 1
+    fi
+fi
+
+# 自动重试：RP1 PIO 退出时偶尔会把 dma2chan0 留在非空闲状态，下一次
+# 启动的刷新线程只发出第一帧就卡住（程序正常但屏是黑的）。程序内的
+# rp1_dma_guard 检测到后以 75 退出；这里最多重试 4 次。
+EXIT_STUCK=75
+ATTEMPTS=4
+child=
+forward_signal() {
+    if [ -n "$child" ]; then
+        kill -TERM "$child" 2>/dev/null || true
+    fi
+}
+trap forward_signal INT TERM HUP
+
+for attempt in $(seq 1 "$ATTEMPTS"); do
+    "$DIR/venv/bin/python" "$DIR/show-image.py" "$@" &
+    child=$!
+    if wait "$child"; then
+        rc=0
+    else
+        rc=$?
+    fi
+    child=
+    if [ "$rc" -ne "$EXIT_STUCK" ]; then
+        exit "$rc"
+    fi
+    echo "点阵屏 DMA 通道卡死，自动重试（${attempt}/${ATTEMPTS}）……" >&2
+done
+
+echo "错误：点阵屏 DMA 通道连续卡死（已重试 ${ATTEMPTS} 次）。" >&2
+echo "请稍等片刻重试；仍不行就执行：" >&2
+echo "  sudo modprobe -r rp1_pio && sudo modprobe rp1_pio" >&2
+exit "$EXIT_STUCK"

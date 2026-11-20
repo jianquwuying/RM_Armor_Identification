@@ -1,0 +1,9 @@
+venv/
+build/
+__pycache__/
+*.pyc
+
+# 本地文档与归档：仅保留 README 在仓库中
+/CLAUDE.md
+/树莓派点阵屏-交接文档.md
+/archive/

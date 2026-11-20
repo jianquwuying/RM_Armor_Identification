@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# GUI 选区工具启动器：免激活 venv，并保证同一时间只有一个实例占用点阵屏。
+# 用法：./crop-selector [-i 图片路径] [--region X,Y,SIZE] [-B 0-100]
+set -euo pipefail
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 互斥：直接锁 /dev/pio0（PIO 后端唯一的硬件资源）。
+# flock 会在进程退出时自动释放；用 200 号 fd 保证它比 Python 打开的
+# 设备 fd 更晚关闭，下一步实例不会在旧实例释放硬件前抢跑。
+# 这样双击两次只会留下一个实例，关闭后立刻重开也会等旧进程清屏退出后再启动。
+if [ -r /dev/pio0 ]; then
+    exec 200</dev/pio0
+    if ! flock -w 3 200; then
+        echo "错误：点阵屏正被另一个程序占用。" >&2
+        if command -v zenity >/dev/null 2>&1; then
+            zenity --warning --title="点阵屏选区" \
+                --text="点阵屏正在被另一个窗口使用。\n\n请先关闭已打开的点阵屏选区 / 图片窗口，\n等一两秒后再双击启动。" \
+                >/dev/null 2>&1 || true
+        fi
+        exit 0
+    fi
+fi
+
+# 自动重试：RP1 PIO 退出时偶尔会把 dma2chan0 留在非空闲状态，下一次
+# 启动的刷新线程只发出第一帧黑色画面就卡住（窗口正常但屏是黑的）。
+# 程序内的 rp1_dma_guard 会检测到这种状态并以 75 退出；这里最多重试
+# 4 次（实测连续启动呈“正常/卡死/卡死”循环，3 次内必有正常实例）。
+EXIT_STUCK=75
+ATTEMPTS=4
+child=
+forward_signal() {
+    if [ -n "$child" ]; then
+        kill -TERM "$child" 2>/dev/null || true
+    fi
+}
+trap forward_signal INT TERM HUP
+
+for attempt in $(seq 1 "$ATTEMPTS"); do
+    "$DIR/venv/bin/python" "$DIR/crop-selector.py" "$@" &
+    child=$!
+    if wait "$child"; then
+        rc=0
+    else
+        rc=$?
+    fi
+    child=
+    if [ "$rc" -ne "$EXIT_STUCK" ]; then
+        exit "$rc"
+    fi
+    echo "点阵屏 DMA 通道卡死，自动重试（${attempt}/${ATTEMPTS}）……" >&2
+done
+
+echo "错误：点阵屏 DMA 通道连续卡死（已重试 ${ATTEMPTS} 次）。" >&2
+if command -v zenity >/dev/null 2>&1; then
+    zenity --error --title="点阵屏选区" \
+        --text="点阵屏的 DMA 通道一直没能恢复。\n\n请关闭后稍等片刻再打开；仍不行就在终端执行：\nsudo modprobe -r rp1_pio && sudo modprobe rp1_pio" \
+        >/dev/null 2>&1 || true
+fi
+exit "$EXIT_STUCK"

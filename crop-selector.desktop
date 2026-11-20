@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=点阵屏选区
+Name[zh_CN]=点阵屏选区
+GenericName=点阵屏图片选区
+GenericName[zh_CN]=点阵屏图片选区
+Comment=在图片上选择正方形区域，二值化/旋转/画笔后显示到 64×64 点阵屏
+Comment[zh_CN]=在图片上选择正方形区域，二值化/旋转/画笔后显示到 64×64 点阵屏
+Exec=/home/pi/RGB-Matrix-Px-xx/progress/crop-selector
+Path=/home/pi/RGB-Matrix-Px-xx/progress
+Icon=/home/pi/RGB-Matrix-Px-xx/progress/crop-selector.png
+Terminal=false
+StartupNotify=true
+StartupWMClass=Cropselector
+Categories=Graphics;
+Keywords=LED;matrix;crop;image;点阵;裁切;二值化;画笔;
